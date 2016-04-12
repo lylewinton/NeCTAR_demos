@@ -1,0 +1,152 @@
+#!/bin/bash
+# author: Lyle Winton
+SEGMENTSIZE=1073741824
+while [[ $# > 0 ]]
+do
+key="$1"
+case $key in
+    -S|--segment-size)
+     SEGMENTSIZE="$2"
+     shift # past argument
+     ;;
+    -N|--segment-number)
+     SEGMENTNUMBER="$2"
+     shift # past argument
+     ;;
+    *)
+     if [ $# -eq 1 ]; then LOCALFILE="$1"; fi
+     if [ $# -eq 2 ]; then CONTAINER="$1"; SWIFTFILE="$2"; shift; fi
+     ;;
+esac
+shift # past argument or value
+done
+
+if [ -z "$LOCALFILE" -a -z "$SWIFTFILE" ] ; then
+	echo "usage:  $0 [options] <localfile>" 1>&2
+	echo "        $0 [options] <container> <swiftfile>" 1>&2
+	echo "   -S N, --segment-size N" 1>&2
+	echo "                  Local file segment size, default 1G (1073741824)" 1>&2
+	echo "   -N N, --segment-number N" 1>&2
+	echo "                  Only return specific segment MD5, first segment is 0." 1>&2
+	echo "" 1>&2
+	echo "   Command returns output similar to md5sum command. However, for large" 1>&2
+	echo "   segmented files it returns a md5sum line for each segment." 1>&2
+	echo "   Expected use is to create a filename.md5 like file (given correct" 1>&2
+	echo "   segment size) which can be compared/diffed with output returned by" 1>&2
+	echo "   the equivalent swiftfile." 1>&2
+	exit -1
+fi
+
+
+
+###
+### Generate localfile segmented MD5sum
+###
+if [ -n "$LOCALFILE" ]; then
+totalsize=`stat -c '%s' "$LOCALFILE"`
+if [ $? -ne 0 ]; then echo "FAIL!" 1>&2 ; exit -1; fi
+segmentcount=$(( ( ( totalsize - 1 ) / SEGMENTSIZE ) + 1 ))
+
+#echo "DBG: TOTALSIZE = $totalsize  SEG COUNT = $segmentcount "
+
+set -o pipefail
+imin=0
+imax=$segmentcount
+if [ -n "$SEGMENTNUMBER" ]; then
+  if (( SEGMENTNUMBER >= segmentcount )); then echo "ERROR: Segment number doesn't exist, only $segmentcount segments starting with 0." 1>&2; exit -1; fi
+  imin=$SEGMENTNUMBER
+  imax=$(( SEGMENTNUMBER + 1 ))
+fi
+for ((i=imin;i<imax;i++)); do
+	dd if="$LOCALFILE" bs=$SEGMENTSIZE count=1 skip=$i 2>/dev/null | md5sum | awk '{printf "%s",$1;}'
+	if [ $? -ne 0 ]; then echo "FAIL!" 1>&2 ; exit -1; fi
+	if (( i == ( segmentcount - 1 ) )); then
+		remainder=$(( totalsize - ( SEGMENTSIZE * ( segmentcount - 1 ) ) ))
+		echo "  $LOCALFILE length=$remainder segment=$i"
+	else
+		echo "  $LOCALFILE length=$SEGMENTSIZE segment=$i"
+	fi
+done
+### End section
+fi
+
+
+
+###
+### Retrieve swiftfile segmented MD5sum
+###
+swiftstat() {
+	STAT_ETAG=""; STAT_LENGTH=""; STAT_MANIFEST="";
+	local TEMPLINES=(); local TEMPLINE=""
+	IFS=$'\n'
+	TEMPLINES=($(swift stat "$1" "$2"))
+	if [ $? -ne 0 ]; then echo "FAIL!" 1>&2 ; exit -1; fi
+	for TEMPLINE in ${TEMPLINES[*]}; do
+		case "$TEMPLINE" in
+		  *\ ETag:\ *)  STAT_ETAG=${TEMPLINE#*\:\ } ;;
+		  *Content\ Length:\ *)  STAT_LENGTH=${TEMPLINE#*\:\ } ;;
+		  *Manifest:\ *)  STAT_MANIFEST=${TEMPLINE#*\:\ } ;;
+		esac
+	done
+}
+if [ -n "$SWIFTFILE" ]; then
+# Get the Manifest header. According to OpenStack docs...
+# The manifest file is simply a zero-byte (not enforced) file with the extra X-Object-Manifest: <container>/<prefix> header, where <container> is the container the object segments are in and <prefix> is the common prefix for all the segments
+swiftstat "$CONTAINER" "$SWIFTFILE"
+if [ -z "$STAT_MANIFEST" ]; then
+	# if no Manifest, no segments, so return only the file ETag
+	if [ -z "$STAT_ETAG" ]; then echo "ERROR: No ETag status metadata!" 1>&2 ; exit -1; fi
+	echo "$STAT_ETAG  $SWIFTFILE length=$STAT_LENGTH segment=0"
+	exit 0
+fi
+# however, turns out the Manifest has URL encoded chars, so unencode
+RETLINE="$STAT_MANIFEST"
+RETLINE=${RETLINE//\%20/ }
+RETLINE=${RETLINE//\%21/\!}
+RETLINE=${RETLINE//\%22/\"}
+RETLINE=${RETLINE//\%23/\#}
+RETLINE=${RETLINE//\%24/\$}
+RETLINE=${RETLINE//\%26/\&}
+RETLINE=${RETLINE//\%27/\'}
+RETLINE=${RETLINE//\%28/\(}
+RETLINE=${RETLINE//\%29/\)}
+RETLINE=${RETLINE//\%2A/\*}
+RETLINE=${RETLINE//\%2B/\+}
+RETLINE=${RETLINE//\%2C/\,}
+RETLINE=${RETLINE//\%3A/\:}
+RETLINE=${RETLINE//\%3B/\;}
+RETLINE=${RETLINE//\%3C/\<}
+RETLINE=${RETLINE//\%3D/\=}
+RETLINE=${RETLINE//\%3E/\>}
+RETLINE=${RETLINE//\%3F/\?}
+RETLINE=${RETLINE//\%40/\@}
+RETLINE=${RETLINE//\%5B/\[}
+RETLINE=${RETLINE//\%5C/\\}
+RETLINE=${RETLINE//\%5D/\]}
+RETLINE=${RETLINE//\%5E/\^}
+RETLINE=${RETLINE//\%60/\`}
+RETLINE=${RETLINE//\%7B/\{}
+RETLINE=${RETLINE//\%7C/\|}
+RETLINE=${RETLINE//\%7D/\}}
+RETLINE=${RETLINE//\%7E/\~}
+RETLINE=${RETLINE//\%25/\%}
+
+SCONTAINER=${RETLINE%%/*}
+SPREFIX=${RETLINE#*/}
+#echo DBG: $RETLINE $SCONTAINER $SPREFIX
+IFS=$'\n'
+LINES=($(swift list "$SCONTAINER" --prefix "$SPREFIX"))
+if [ $? -ne 0 ]; then echo "FAIL SEGMENT CONTAINER LISTING!" 1>&2 ; exit -1; fi
+for LINE in ${LINES[*]}; do
+#echo DBG: $LINE here
+	segment=${LINE##*\/0}
+	segment=$(( segment + 0 ))
+	if [ -n "$SEGMENTNUMBER" ]; then
+		if (( SEGMENTNUMBER != segment )); then continue; fi
+	fi
+	swiftstat "$SCONTAINER" "$LINE"
+	if [ -z "$STAT_ETAG" ]; then echo "ERROR: No ETag status metadata!" 1>&2 ; exit -1; fi
+	echo "$STAT_ETAG  $SWIFTFILE length=$STAT_LENGTH segment=$segment"
+done
+### End section
+fi
