@@ -1,0 +1,184 @@
+
+##  
+## Template to deploy a Jupyter Datascience Notebook
+## https://github.com/jupyter/docker-stacks/tree/master/datascience-notebook
+##
+
+heat_template_version: 2013-05-23
+
+description: Template to deploy a Jupyter Datascience Notebook
+
+
+###
+### Input parameters
+###
+
+parameters:
+#  key_name:
+#    type: string
+#    default: ????????
+#    label: SSH key for all servers
+#    description: Name of key-pair, public SSH key stored in OpenStack security, to be used for compute instance
+#    constraints:
+#      - custom_constraint: nova.keypair
+  notebook_password:
+    type: string
+    label: Notebook Password
+    description: Notebook web password, must be 8 or more characters, letters, numbers and other characters..
+    hidden: true
+    constraints:
+       - length: { min: 8 }
+         description: Password length must be 8 characters or longer.
+       - allowed_pattern: ".*[a-zA-Z].*"
+         description: Password must contain letters.
+       - allowed_pattern: ".*[0-9].*"
+         description: Password must contain numbers.
+       - allowed_pattern: ".*[^a-zA-Z0-9].*"
+         description: Password must contain characters other than letters or numbers.
+       - allowed_pattern: "[^']+"
+         description: Password cannot contain a single quote (sorry).
+  image_id:
+    type: string
+    label: Operating system (image ID)
+    # NeCTAR Ubuntu 14.04 LTS
+    default: e9f0323e-9383-4dc9-a2ee-846ef8d35ee7
+    description: Base system image to be used for compute hosts eg. NeCTAR Ubuntu 14.04 (Trusty) amd64
+    constraints:
+      - custom_constraint: glance.image
+  instance_type:
+    type: string
+    label: Instance type (recommend m2.small)
+    default: m2.small
+    description: Size of instance (flavor) to be used for host
+    constraints:
+      #- custom_constraint: nova.flavor
+      - allowed_values: [m2.small,m2.medium,m2.large,m2.xlarge]
+  availability_zone:
+    type: string
+    label: Location
+    description: Availability zone location name.
+    constraints:
+      - allowed_values: [ melbourne, monash, NCI, QRIScloud, intersect, pawsey, sa, tasmania]
+
+resources:
+  ###
+  ### Security Groups
+  ###
+  
+  # This security group is used for all hosts, for now
+  compute_SecurityGroup:
+    type: AWS::EC2::SecurityGroup
+    properties:
+      GroupDescription: Standard firewall rules
+      SecurityGroupIngress:
+      - {IpProtocol: tcp, FromPort: '22', ToPort: '22', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '80', ToPort: '80', CidrIp: 0.0.0.0/0}
+
+
+  ###
+  ### hosts startup
+  ###
+
+  # compute instances
+  compute_node:
+        type: OS::Nova::Server
+        properties:
+          name:
+            str_replace:
+              template: $stackname
+              params:
+                "$stackname": { get_param: "OS::stack_name" } 
+          #key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: instance_type }
+          availability_zone: { get_param: availability_zone }
+          security_groups:
+          - {Ref: compute_SecurityGroup}
+          user_data: { get_resource: compute_config }
+          user_data_format: RAW
+
+  compute_nodes_finish_signal:
+    type: OS::Heat::WaitConditionHandle
+
+  compute_nodes_all_finished_check:
+    type: OS::Heat::WaitCondition
+    properties:
+      handle: { get_resource: compute_nodes_finish_signal }
+      # 1 signals needed for 1 node
+      count: 1
+      # wait for 20 minutes total
+      timeout: 1200
+
+
+
+  ###
+  ### Software Setup Configuration
+  ###
+
+  compute_config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            error() {
+              set +vx
+              local parent_lineno="$1"
+              local code="${2:-1}"
+              echo "ERROR: near line ${parent_lineno} exiting with status ${code}"
+              # Signal install FAILURE
+              wc_notify --data-binary '{"status": "FAILURE", "reason": "['`hostname`'] ERROR: near line '${parent_lineno}' exiting with status '${code}'"}'
+              exit "${code}"
+            }
+            trap 'error ${LINENO} $?' ERR
+            set -vx
+            #IP=$(ip addr | grep 'state UP' -A2 | tail -n1 | awk '{print $2}' | cut -f1  -d'/')
+            apt-get update
+            apt-get --force-yes -y install curl
+            ### Install Docker
+            apt-get --force-yes -y install apt-transport-https ca-certificates
+            apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+            echo "deb https://apt.dockerproject.org/repo ubuntu-trusty main" > /etc/apt/sources.list.d/docker.list
+            apt-get update
+            apt-get purge lxc-docker
+            apt-cache policy docker-engine
+            apt-get --force-yes -y install linux-image-extra-$(uname -r)
+            apt-get --force-yes -y install apparmor
+            apt-get --force-yes -y install docker-engine
+            update-rc.d docker defaults
+            service docker stop && echo "Warning: Nothing to stop"
+            sleep 7
+            service docker start
+            docker run hello-world
+            ### Install jupyter/datascience-notebook on port 80
+            set +vx
+            docker run -d -p 80:8888 -e PASSWORD='$notebook_password' --user root -e GRANT_SUDO=yes jupyter/datascience-notebook
+            ### set root password for console access if needed
+            ( echo '$notebook_password' ; echo '$notebook_password' ) | passwd -q root
+            ### Signal end of install SUCCESS
+            set +vx
+            wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
+          params:
+            wc_notify: { get_attr: ['compute_nodes_finish_signal', 'curl_cli'] }
+            $notebook_password: { get_param: notebook_password }
+
+
+###
+### Return values
+###
+
+outputs:
+  # provide example SSH command to first host
+  notebook_url:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip
+        params:
+          $server_ip: { get_attr: [compute_node, first_address] }
+  # list the IPs of the hosts created
+#  compute_ip:
+#    description: ''
+#    value: { get_attr: [compute_node, first_address] }
