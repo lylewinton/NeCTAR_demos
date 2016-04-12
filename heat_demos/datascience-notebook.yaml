@@ -132,6 +132,10 @@ resources:
               exit "${code}"
             }
             trap 'error ${LINENO} $?' ERR
+            ### set root password for console access if needed
+            set +vx
+            ( echo '$notebook_password' ; echo '$notebook_password' ) | passwd -q root
+            ### get started
             set -vx
             #IP=$(ip addr | grep 'state UP' -A2 | tail -n1 | awk '{print $2}' | cut -f1  -d'/')
             apt-get update
@@ -154,8 +158,6 @@ resources:
             ### Install jupyter/datascience-notebook on port 80
             set +vx
             docker run -d -p 80:8888 -e PASSWORD='$notebook_password' --user root -e GRANT_SUDO=yes jupyter/datascience-notebook
-            ### set root password for console access if needed
-            ( echo '$notebook_password' ; echo '$notebook_password' ) | passwd -q root
             ### Signal end of install SUCCESS
             set +vx
             wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
