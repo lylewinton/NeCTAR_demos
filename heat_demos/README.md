@@ -6,5 +6,5 @@ https://dashboard.rc.nectar.org.au/
 
 Heat templates:
 * [datascience-notebook.yaml](datascience-notebook.yaml) ([quick start link](https://dashboard.rc.nectar.org.au/project/stacks/select_template?template_source=url&template_url=https%3A%2F%2Fraw.githubusercontent.com%2Flylewinton%2FNeCTAR_demos%2Fmaster%2Fheat_demos%2Fdatascience-notebook.yaml))
-  * Launches a Jupyter notebook accessible via the web.  Check the heat outputs notebook_url for the web link (in the Overview tab in the web GUI).  The template  will not complete until the install completes successfully.  Note, that the GRANT_SUDO jupyter option allows for package install via a notebook (eg. !pip install lightning-python ), so commandline access should be unnecessary.
+  * Launches a Jupyter/iPython notebook accessible via the web.  The template attempts to enforce that a reasonable password is provided.  Check the heat output "notebook_url" for the web link, usually found in the Overview tab of the openstack web dashboard.  The template will not complete until the install completes successfully.  It uses the docker image provided by Jupyter, which takes quite a while to install (10 mins for me).  Note, that the GRANT_SUDO jupyter option allows for python packages to be installed via a notebook (eg. using "!pip install lightning-python"), so commandline access to the host should be unnecessary.
 
