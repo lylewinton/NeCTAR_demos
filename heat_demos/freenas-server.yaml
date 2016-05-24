@@ -1,0 +1,127 @@
+
+##  
+## Template to deploy a FreeNAS - Network Attached Storage Server
+## http://www.freenas.org/
+##
+##  This template launches the server from an image on ephemeral disk.
+##  An existing Data Volume is required. It will be formatted the
+##  first time it is used with FreeNAS.
+##  (The pre-configured image was built by booting the FreeNAS ISO.)
+##
+##  Ops Tip 1:
+##   Save the Backup Config db file from the System -> General menu.
+##   Then later you can rebuild the freenas server, reattach the
+##   existing volume pool, click next through all setup Wizard options,
+##   then System -> General -> Upload Config to restore.
+##  Ops Tip 2:
+##   Alternatively snapshot after setup and periodically thereafter.
+##   Regardless, save the Backup Config db file to be sure.
+##  Ops Tip 3:
+##   Alternatively you can convert a snapshot to a boot-volume and boot
+##   from that volume from there on, remembering to attach the data
+##   volume to the instance.
+##   Regardless, save the Backup Config db file to be sure.
+##  Ops Tip 4:
+##   Storing valuable files without backup is dangerous on any system.
+##   Consider using Replication Tasks or Rsync Tasks to backup data.
+##  Ops Tip 5:
+##   The console allows some operations, including password reset.
+##
+
+heat_template_version: 2013-05-23
+
+description: Template to deploy a FreeNAS - Network Attached Storage Server
+
+
+###
+### Input parameters
+###
+
+parameters:
+  availability_zone:
+    type: string
+    label: Volume/Server Location
+    description: Availability zone location of both the storage volume and server.
+    constraints:
+      # this list should be the same as locations where volume creation is allowed
+      - allowed_values: [ melbourne-np, melbourne-qh2, monash-01, monash-02, QRIScloud, NCI, intersect, pawsey-01, sa, tasmania, tasmania-s]
+  data_volume:
+    type: string
+    label: Data Volume UUID at Location
+    description: Enter the UUID of an existing free data volume at the server location.
+    #constraints:
+    #  - custom_constraint: cinder.volume
+
+resources:
+  ###
+  ### Security Groups
+  ###
+  
+  freenas_SecurityGroup:
+    type: AWS::EC2::SecurityGroup
+    properties:
+      GroupDescription: Firewall rules for SSH, web, CIFS, NFS
+      SecurityGroupIngress:
+      # SSH used for replication
+      - {IpProtocol: tcp, FromPort: '22', ToPort: '22', CidrIp: 0.0.0.0/0}
+      # WEB
+      - {IpProtocol: tcp, FromPort: '80', ToPort: '80', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '443', ToPort: '443', CidrIp: 0.0.0.0/0}
+      # CIFS
+      - {IpProtocol: tcp, FromPort: '445', ToPort: '445', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '139', ToPort: '139', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: udp, FromPort: '137', ToPort: '138', CidrIp: 0.0.0.0/0}
+      # NFS
+      - {IpProtocol: udp, FromPort: '111', ToPort: '111', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '111', ToPort: '111', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: udp, FromPort: '2049', ToPort: '2049', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '2049', ToPort: '2049', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: udp, FromPort: '32765', ToPort: '32768', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '32765', ToPort: '32768', CidrIp: 0.0.0.0/0}
+
+
+  ###
+  ### hosts startup
+  ###
+
+  # FreeNAS Server host
+  freenas_server:
+    type: OS::Nova::Server
+    properties:
+      name:
+        str_replace:
+          template: $stackname
+          params:
+            "$stackname": { get_param: "OS::stack_name" } 
+      image: FreeNAS-9.10-STABLE-201603252134
+      flavor: m2.medium
+      availability_zone: { get_param: availability_zone }
+      security_groups:
+      - {Ref: freenas_SecurityGroup}
+
+  volume_attachment:
+    type: OS::Cinder::VolumeAttachment
+    properties:
+      volume_id: { get_param: data_volume }
+      instance_uuid: { get_resource: freenas_server }
+      mountpoint: /dev/vdc
+
+
+###
+### Return values
+###
+
+outputs:
+  # provide URL for connection to server
+  FreeNAS_URL:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip
+        params:
+          $server_ip: { get_attr: [freenas_server, first_address] }
+  Note:
+    description: ' '
+    value: In a few minutes try accessing the FreeNAS URL to start the config Wizard.  Try root and nectar-freenas-1234 to get started and change the root pass-wrd.
+
