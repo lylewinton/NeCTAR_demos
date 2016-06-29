@@ -164,10 +164,19 @@ resources:
             set +vx
             docker run --restart=always -d --name=rstudio1 -p 8787:8787 -e USER='$rstudio_username' -e PASSWORD='$rstudio_password' -e ROOT=TRUE rocker/rstudio
             set -vx
-            ### Download test data 
-            # docker exec -u '$rstudio_username' rstudio1 bash -c "wget --quiet -O ~/input.csv 'https://data.montgomerycountymd.gov/api/views/6rqk-pdub/rows.csv?accessType=DOWNLOAD'"
-            ### Setup .Rprofile
-            # docker exec -u '$rstudio_username' rstudio1 bash -c "echo 'install.packages(\"fortunes\"); mydata <- read.csv(\"input.csv\"); library(\"fortunes\");' > ~/.Rprofile"
+            ### create scripts
+            cat > 1.Load_Data.R <<EOF
+            mydata <- read.csv(url("http://stat511.cwick.co.nz/homeworks/acs_or.csv")); View(mydata)
+            EOF
+            cat > 2.Load_Libraries.R <<EOF
+            install.packages("ggplot2")
+            EOF
+            cat > 3.Data_Visualise.R <<EOF
+            library(ggplot2); qplot(income_husband,income_wife,data=mydata,color=number_children)
+            EOF
+            docker cp 1.Load_Data.R rstudio1:/home/rstudio/
+            docker cp 2.Load_Libraries.R rstudio1:/home/rstudio/
+            docker cp 3.Data_Visualise.R rstudio1:/home/rstudio/
             ### Signal end of install SUCCESS
             set +vx
             wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
