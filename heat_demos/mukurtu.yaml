@@ -1,0 +1,223 @@
+##  
+## Template to deploy a Mukurtu CMS
+## http://mukurtu.org/
+##
+
+heat_template_version: 2013-05-23
+
+description: Template to deploy a Mukurtu CMS
+
+
+###
+### Input parameters
+###
+
+parameters:
+  key_name:
+    type: string
+    default: null
+    label: SSH key for server
+    description: Name of key-pair, public SSH key stored in OpenStack security, to be used for server instance ec2-user login.
+    constraints:
+      - custom_constraint: nova.keypair
+  image_id:
+    type: string
+    label: Operating system (image ID)
+    # NeCTAR CentOS 7 x86_64
+    default: bbc33e7c-bdd2-4121-b331-1c0548c5dfee
+    description: Base system image to be used for compute hosts eg. NeCTAR CentOS 7 x86_64
+    constraints:
+      - custom_constraint: glance.image
+  instance_type:
+    type: string
+    label: Instance type (recommend m2.medium)
+    default: m2.medium
+    description: Size of instance (flavor) to be used for host
+    constraints:
+      #- custom_constraint: nova.flavor
+      - allowed_values: [m2.medium,m2.small,m2.large,m2.xlarge]
+  availability_zone:
+    type: string
+    label: Location
+    description: Availability zone location name.
+    constraints:
+      - allowed_values: [ melbourne, monash, NCI, QRIScloud, intersect, pawsey, sa, tasmania]
+
+resources:
+  ###
+  ### Security Groups
+  ###
+  
+  # This security group is used for hosts
+  compute_SecurityGroup:
+    type: AWS::EC2::SecurityGroup
+    properties:
+      GroupDescription: Standard firewall rules for the server
+      SecurityGroupIngress:
+      - {IpProtocol: tcp, FromPort: '22', ToPort: '22', CidrIp: 0.0.0.0/0}
+      - {IpProtocol: tcp, FromPort: '80', ToPort: '80', CidrIp: 0.0.0.0/0}
+
+
+  ###
+  ### hosts startup
+  ###
+
+  compute_nodes_finish_signal:
+    type: OS::Heat::WaitConditionHandle
+
+  compute_nodes_all_finished_check:
+    type: OS::Heat::WaitCondition
+    properties:
+      handle: { get_resource: compute_nodes_finish_signal }
+      # 1 signals needed for 1 node
+      count: 1
+      # wait for 20 minutes total
+      timeout: 1200
+
+  # compute instances
+  compute_node:
+        type: OS::Nova::Server
+        properties:
+          name:
+            str_replace:
+              template: $stackname
+              params:
+                "$stackname": { get_param: "OS::stack_name" } 
+          key_name: { get_param: key_name }
+          image: { get_param: image_id }
+          flavor: { get_param: instance_type }
+          availability_zone: { get_param: availability_zone }
+          security_groups:
+          - {Ref: compute_SecurityGroup}
+          user_data_format: RAW
+          user_data:
+            str_replace:
+              template: |
+                #!/bin/bash
+                error() {
+                  set +vx
+                  local parent_lineno="$1"
+                  local code="${2:-1}"
+                  echo "ERROR: near line ${parent_lineno} exiting with status ${code}"
+                  # Signal install FAILURE
+                  wc_notify --data-binary '{"status": "FAILURE", "reason": "['`hostname`'] ERROR: near line '${parent_lineno}' exiting with status '${code}'"}'
+                  exit "${code}"
+                }
+                trap 'error ${LINENO} $?' ERR
+                ### get started
+                set -vx
+                #IP=$(ip addr | grep 'state UP' -A2 | tail -n1 | awk '{print $2}' | cut -f1  -d'/')
+                yum clean all
+                yum -y update
+                yum -y install curl
+                
+                ### Install Apache HTTPD
+                yum -y install httpd
+                systemctl start httpd
+                systemctl enable httpd
+                
+                ### Install MySQL
+                yum -y install mariadb-server mariadb
+                systemctl start mariadb
+                systemctl enable mariadb
+                # following replaces mysql_secure_installation
+                set +x
+                export DATABASE_PASS=`date +%s | sha256sum | base64 | head -c 32 ; echo`
+                mysqladmin -u root password "$DATABASE_PASS"
+                mysql -u root -p"$DATABASE_PASS" -e "UPDATE mysql.user SET Password=PASSWORD('$DATABASE_PASS') WHERE User='root'"
+                mysql -u root -p"$DATABASE_PASS" -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')"
+                mysql -u root -p"$DATABASE_PASS" -e "DELETE FROM mysql.user WHERE User=''"
+                mysql -u root -p"$DATABASE_PASS" -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\_%'"
+                mysql -u root -p"$DATABASE_PASS" -e "FLUSH PRIVILEGES"
+                set -vx
+                # up the packet size for mukurtu
+                cp /etc/my.cnf /etc/my.cnf.orig
+                cat /etc/my.cnf.orig | grep -v 'max_allowed_packet' | sed 's/\[mysqld\]/[mysqld]\nmax_allowed_packet=512M/' > /etc/my.cnf
+                systemctl restart mariadb
+                
+                ### Install PHP, PHP DOM (XML), PHP GD, mbstring
+                yum -y install php php-mysql php-xml php-gd php-mbstring
+                # up the memory and time for mukurtu (installer)
+                cp /etc/php.ini /etc/php.ini.orig
+                cat /etc/php.ini.orig | sed "s/memory_limit = .*/memory_limit = 256M/" | sed "s/max_input_time = .*/max_input_time = 1600/" | sed "s/max_execution_time = .*/max_execution_time = 1600/" > /etc/php.ini
+                systemctl restart httpd
+                
+                ### Install Mukurtu
+                cd /root
+                yum -y install git
+                git clone https://github.com/MukurtuCMS/mukurtucms
+                mv mukurtucms /var/www/
+                cat > /etc/httpd/conf.d/localvhost.conf <<EOF
+                <VirtualHost *:80>
+                ServerAdmin webmaster@localhost
+                DocumentRoot /var/www/mukurtucms
+                ErrorLog /var/log/httpd/error.log
+                CustomLog /var/log/httpd/access.log combined
+                </VirtualHost>
+                EOF
+                cd /var/www/mukurtucms/
+                chmod a+w sites/default/files
+                # private file system path
+                mkdir /var/www/mukurtucms-private
+                chown apache:apache /var/www/mukurtucms-private
+                # create and setup the database
+                set +x
+                mysql -u root -p"$DATABASE_PASS" -e "CREATE DATABASE mukurtu;"
+                cat sites/default/default.settings.php | sed "s/'database' => '.*'/'database' => 'mukurtu'/" | sed "s/'username' => '.*'/'username' => 'root'/" | sed "s/'password' => '.*'/'password' => '$DATABASE_PASS'/" > sites/default/settings.php
+                set -vx
+                systemctl restart httpd
+                ### Signal end of install SUCCESS
+                set +vx
+                wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
+              params:
+                wc_notify: { get_attr: ['compute_nodes_finish_signal', 'curl_cli'] }
+
+
+###
+### Return values
+###
+
+outputs:
+  # provide URL access
+  mukurtu_url:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip/
+        params:
+          $server_ip: { get_attr: [compute_node, first_address] }
+  mukurtu_config_private_url:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip/admin/config/media/file-system
+        params:
+          $server_ip: { get_attr: [compute_node, first_address] }
+  mukurtu_config_cron_url:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip/admin/config/system/cron
+        params:
+          $server_ip: { get_attr: [compute_node, first_address] }
+  mukurtu_config_starter_url:
+    description: ' '
+    value: 
+      str_replace:
+        template: |
+          http://$server_ip/admin/appearance/settings/mukurtu_starter
+        params:
+          $server_ip: { get_attr: [compute_node, first_address] }
+  instructions:
+    description: ' '
+    value: |
+      Got to the mukurtu_url link to start running the installation.
+      This will take 5-10 minutes, followed by a form, followed by
+      another 3-5 minutes. After you will be provided with a link to
+      click and check if successful.
+      Next go to the mukurtu_config_private_url link and provide the
+      private file system path with /var/www/mukurtucms-private .
+      Try the other config URLs.
