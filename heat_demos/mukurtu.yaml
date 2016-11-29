@@ -153,6 +153,10 @@ resources:
                 DocumentRoot /var/www/mukurtucms
                 ErrorLog /var/log/httpd/error.log
                 CustomLog /var/log/httpd/access.log combined
+                <Directory /var/www/mukurtucms>
+                Options FollowSymLinks
+                AllowOverride All
+                </Directory>
                 </VirtualHost>
                 EOF
                 cd /var/www/mukurtucms/
