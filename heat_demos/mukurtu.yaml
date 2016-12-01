@@ -116,6 +116,31 @@ resources:
                 systemctl start httpd
                 systemctl enable httpd
                 
+                ### Prepare for possible SMTP email setting
+                yum -y install postfix cyrus-sasl-plain mailx
+                systemctl restart postfix
+                systemctl enable postfix
+                cat >> /etc/postfix/main.cf <<EOF
+                ## Heat install added lines. Uncomment and configure to enable.
+                ## Update relayhost and password in /etc/postfix/sasl_passwd then run...
+                ## > postmap /etc/postfix/sasl_passwd
+                ## > systemctl reload postfix
+                #relayhost = [smtp.gmail.com]:587
+                #smtp_use_tls = yes
+                #smtp_sasl_auth_enable = yes
+                #smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+                #smtp_tls_CAfile = /etc/ssl/certs/ca-bundle.crt
+                #smtp_sasl_security_options = noanonymous
+                #smtp_sasl_tls_security_options = noanonymous
+                EOF
+                cat > /etc/postfix/sasl_passwd <<EOF
+                [smtp.gmail.com]:587 username:password
+                EOF
+                postmap /etc/postfix/sasl_passwd
+                chown root:postfix /etc/postfix/sasl_passwd*
+                chmod 640 /etc/postfix/sasl_passwd*
+                systemctl reload postfix
+                
                 ### Install MySQL
                 yum -y install mariadb-server mariadb
                 systemctl start mariadb
@@ -191,7 +216,7 @@ outputs:
           http://$server_ip/
         params:
           $server_ip: { get_attr: [compute_node, first_address] }
-  mukurtu_config_private_url:
+  cfg_private_url:
     description: ' '
     value: 
       str_replace:
@@ -199,7 +224,7 @@ outputs:
           http://$server_ip/admin/config/media/file-system
         params:
           $server_ip: { get_attr: [compute_node, first_address] }
-  mukurtu_config_cron_url:
+  cfg_cron_url:
     description: ' '
     value: 
       str_replace:
@@ -207,7 +232,7 @@ outputs:
           http://$server_ip/admin/config/system/cron
         params:
           $server_ip: { get_attr: [compute_node, first_address] }
-  mukurtu_config_starter_url:
+  cfg_starter_url:
     description: ' '
     value: 
       str_replace:
@@ -219,9 +244,19 @@ outputs:
     description: ' '
     value: |
       Got to the mukurtu_url link to start running the installation.
-      This will take 5-10 minutes, followed by a form, followed by
-      another 3-5 minutes. After you will be provided with a link to
-      click and check if successful.
-      Next go to the mukurtu_config_private_url link and provide the
-      private file system path with /var/www/mukurtucms-private .
-      Try the other config URLs.
+      This will take 5-10 minutes, followed by a form, followed by waiting
+      another 3-5 minutes to complete loading.
+      After install you will be provided with a link to click to check if successful.
+      Pages could take a while to load initially.
+      
+      Next go to the cfg_private_url link and provide the private
+      file system path with /var/www/mukurtucms-private .
+      
+      Go to the cfg_cron_url and set "Run cron every" 12 hours.
+      
+      Go to the cfg_starter_url and Logo Image Setting to upload your logo.
+      
+      Once logged in you should see the "Dashboard" button from where you can
+      explore the Wizard to aid you in getting started.  Most Mukurtu functions
+      can also be found on the Dashboard.  Most site settings can be found
+      in the Configuration menu.
