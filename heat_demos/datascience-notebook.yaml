@@ -157,7 +157,9 @@ resources:
             docker run hello-world
             ### Install jupyter/datascience-notebook on port 80
             set +vx
-            docker run --restart=always -d -p 80:8888 -e PASSWORD='$notebook_password' --user root -e GRANT_SUDO=yes jupyter/datascience-notebook
+            NBSHA=$(echo -n '$notebook_password' | sha1sum | awk '{print $1}')
+            set -vx
+            docker run --restart=always -d -p 80:8888 --user root -e GRANT_SUDO=yes jupyter/datascience-notebook start-notebook.sh --NotebookApp.password="sha1:$NBSHA"
             ### Signal end of install SUCCESS
             set +vx
             wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
