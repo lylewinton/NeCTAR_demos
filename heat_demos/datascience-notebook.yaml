@@ -30,11 +30,11 @@ parameters:
        - length: { min: 8 }
          description: Password length must be 8 characters or longer.
        - allowed_pattern: ".*[a-zA-Z].*"
-         description: Password must contain letters.
+         description: Password must contain LETTERS, numbers and other characters.
        - allowed_pattern: ".*[0-9].*"
-         description: Password must contain numbers.
+         description: Password must contain NUMBERS, letters and other characters.
        - allowed_pattern: ".*[^a-zA-Z0-9].*"
-         description: Password must contain characters other than letters or numbers.
+         description: Password must contain letters, numbers and OTHER CHARACTERS.
        - allowed_pattern: "[^']+"
          description: Password cannot contain a single or double quotes (sorry).
        - allowed_pattern: '[^"]+'
