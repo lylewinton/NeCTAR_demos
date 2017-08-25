@@ -154,12 +154,16 @@ resources:
             service docker stop && echo "Warning: Nothing to stop"
             sleep 7
             service docker start
-            docker run hello-world
+            docker run --rm hello-world
             ### Install jupyter/datascience-notebook on port 80
+            # install and test passwd runs in ipython
+            docker run --rm jupyter/datascience-notebook ipython -c 'from IPython.lib import passwd; passwd("")'
+            # generate ipython sha1 web access password for notebook
             set +vx
-            NBSHA=$(echo -n '$notebook_password' | sha1sum | awk '{print $1}')
+            NBSHA=$(docker run --rm jupyter/datascience-notebook ipython -c 'from IPython.lib import passwd; passwd('"'$notebook_password'"')' | awk '{print $2}' | sed "s/'//g")
             set -vx
-            docker run --restart=always -d -p 80:8888 --user root -e GRANT_SUDO=yes jupyter/datascience-notebook start-notebook.sh --NotebookApp.password="sha1:$NBSHA"
+            # start the notebook container, start on book, connect port 80, grant sudo access to allow package installs from within notebook
+            docker run --restart=always -d -p 80:8888 --user root -e GRANT_SUDO=yes jupyter/datascience-notebook start-notebook.sh --NotebookApp.password="$NBSHA"
             ### Signal end of install SUCCESS
             set +vx
             wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
