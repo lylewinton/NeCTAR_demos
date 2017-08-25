@@ -137,7 +137,7 @@ resources:
             ( echo '$notebook_password' ; echo '$notebook_password' ) | passwd -q root
             ### get started
             set -vx
-            #IP=$(ip addr | grep 'state UP' -A2 | tail -n1 | awk '{print $2}' | cut -f1  -d'/')
+            #IP=$(ip route get 8.8.8.8 | head -1 | cut -d' ' -f8)
             apt-get update
             apt-get --force-yes -y install curl
             ### Install Docker
