@@ -17,6 +17,7 @@ parameters:
   rstudio_username:
     type: string
     label: RStudio Username
+    default: rstudio
     description: RStudio web username, must be 3 or more characters, lower case letters, numbers, underscores and hyphens.
     constraints:
        - length: { min: 3 }
@@ -164,7 +165,7 @@ resources:
             set +vx
             docker run --restart=always -d --name=rstudio1 -p 8787:8787 -e USER='$rstudio_username' -e PASSWORD='$rstudio_password' -e ROOT=TRUE rocker/rstudio
             set -vx
-            ### create scripts
+            ### pre-load some R scripts
             cat > 1.Load_Data.R <<EOF
             mydata <- read.csv(url("http://stat511.cwick.co.nz/homeworks/acs_or.csv")); View(mydata)
             EOF
@@ -174,9 +175,10 @@ resources:
             cat > 3.Data_Visualise.R <<EOF
             library(ggplot2); qplot(income_husband,income_wife,data=mydata,color=number_children)
             EOF
-            docker cp 1.Load_Data.R rstudio1:/home/rstudio/
-            docker cp 2.Load_Libraries.R rstudio1:/home/rstudio/
-            docker cp 3.Data_Visualise.R rstudio1:/home/rstudio/
+            sleep 10
+            docker cp 1.Load_Data.R rstudio1:/home/$rstudio_username/
+            docker cp 2.Load_Libraries.R rstudio1:/home/$rstudio_username/
+            docker cp 3.Data_Visualise.R rstudio1:/home/$rstudio_username/
             ### Signal end of install SUCCESS
             set +vx
             wc_notify --data-binary '{"status": "SUCCESS", "reason": "Host '`hostname`' finished install"}'
